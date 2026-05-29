@@ -10,6 +10,7 @@ use App\Enums\ReservationStatus;
 use App\Events\ReservationCreated;
 use App\Exceptions\ReservationAlreadyProcessedException;
 use App\Exceptions\ReservationNotFoundException;
+use App\Models\Book;
 use App\Models\Reservation;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -121,9 +122,9 @@ final class ReservationService
     public function cancel(int $reservationId): Reservation
     {
         return DB::transaction(function () use ($reservationId): Reservation {
-            $reservation = Reservation::with('book')
-                ->lockForUpdate()
-                ->find($reservationId);
+            // Lock the reservation row first to prevent concurrent cancel attempts
+            // (e.g., admin cancel racing with the scheduler's auto-expiry).
+            $reservation = Reservation::lockForUpdate()->find($reservationId);
 
             if (! $reservation) {
                 throw new ReservationNotFoundException($reservationId);
@@ -136,14 +137,19 @@ final class ReservationService
                 );
             }
 
-            // Restore stock atomically before marking as cancelled
+            // Lock the book row separately to safely increment stock.
+            // Using Book::lockForUpdate()->find() — NOT the relation proxy —
+            // because the relation proxy does not guarantee a FOR UPDATE clause.
+            $book = Book::lockForUpdate()->find($reservation->book_id);
+
             // increment() issues: UPDATE books SET stock = stock + 1 WHERE id = ?
-            $reservation->book()->lockForUpdate()->first()->increment('stock');
+            // This is atomic at the SQL level — no read-modify-write race.
+            $book->increment('stock');
 
             $reservation->update([
                 'status'       => ReservationStatus::Cancelled,
                 'cancelled_at' => now(),
-                'expires_at'   => null,
+                'expires_at'   => null, // Remove from scheduler's target set
             ]);
 
             return $reservation->fresh();
