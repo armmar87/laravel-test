@@ -1,5 +1,6 @@
 <?php
 
+use App\Console\Commands\CancelExpiredReservations;
 use App\Exceptions\BookOutOfStockException;
 use App\Exceptions\DuplicatePendingReservationException;
 use App\Exceptions\ReservationAlreadyProcessedException;
@@ -17,6 +18,9 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    ->withCommands([
+        CancelExpiredReservations::class,
+    ])
     ->withMiddleware(function (Middleware $middleware): void {
         //
     })
